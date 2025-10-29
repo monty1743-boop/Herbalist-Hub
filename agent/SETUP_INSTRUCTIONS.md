@@ -259,4 +259,4 @@ If you encounter issues:
 
 **Ready to start?** Run `./setup.sh` then `./start.sh` and watch your HerbalistHub application come to life! 🌿
 
-The AI agents will work together to build your complete web application, following the specification exactly. Sit back and supervise as they collaborate to create your herbal practice management system!
+The AI agents will work together to build your complete web application, following the specification exactly. Sit back and supervise as they collaborate to create your herbal practice management system! 
