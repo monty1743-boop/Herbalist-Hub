@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  # MySQL Database for local development
+  mysql:
+    image: mysql:8.0
+    container_name: herbalisthub-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: herbalist_root_password
+      MYSQL_DATABASE: herbalisthub_dev
+      MYSQL_USER: herbalist_user
+      MYSQL_PASSWORD: herbalist_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./docker/mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+    networks:
+      - herbalisthub-network
+    command: --default-authentication-plugin=mysql_native_password
+
+  # phpMyAdmin for database management (development only)
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: herbalisthub-phpmyadmin
+    restart: unless-stopped
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_USER: herbalist_user
+      PMA_PASSWORD: herbalist_password
+      MYSQL_ROOT_PASSWORD: herbalist_root_password
+    ports:
+      - "8080:80"
+    depends_on:
+      - mysql
+    networks:
+      - herbalisthub-network
+
+  # Redis for session storage and caching (optional for development)
+  redis:
+    image: redis:7-alpine
+    container_name: herbalisthub-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - herbalisthub-network
+    command: redis-server --appendonly yes
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  herbalisthub-network:
+    driver: bridge

@@ -1,0 +1,1057 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ===================================================================
+// AUTHENTICATION & USER MANAGEMENT (NextAuth.js integration)
+// ===================================================================
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ===================================================================
+// CORE USER MANAGEMENT
+// ===================================================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  role          Role      @default(CLIENT)
+  image         String?
+  phone         String?
+
+  // Practice information relationship
+  practiceInfo PracticeInfo?
+
+  // Audit and compliance
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  lastLogin  DateTime?
+  isActive   Boolean   @default(true)
+
+  // Authentication relationships
+  accounts Account[]
+  sessions Session[]
+
+  // Application relationships
+  clientAppointments   Appointment[]         @relation("ClientAppointments")
+  herbalistAppointments Appointment[]        @relation("HerbalistAppointments")
+  formulas             Formula[]
+  formulaVersions      FormulaVersion[]
+  formulaTags          FormulaTag[]
+  sharedFormulas       FormulaShare[]     @relation("SharedFormulas")
+  receivedFormulas     FormulaShare[]     @relation("ReceivedFormulas")
+  formulaComments      FormulaComment[]
+  moderatedComments    FormulaComment[]   @relation("ModeratedComments")
+  resolvedComments     FormulaComment[]   @relation("ResolvedComments")
+  formulaCollaborations FormulaCollaborator[] @relation("FormulaCollaborations")
+  formulaInvitations   FormulaCollaborator[] @relation("FormulaInvitations")
+  formulaReviews       FormulaReview[]    @relation("FormulaReviews")
+  verifiedReviews      FormulaReview[]    @relation("VerifiedReviews")
+  sentMessages         Message[]             @relation("SentMessages")
+  receivedMessages     Message[]             @relation("ReceivedMessages")
+  intakeSubmissions    IntakeSubmission[]
+  eventRegistrations   EventRegistration[]
+  clientProfile        ClientProfile?
+  auditLogs            AuditLog[]
+
+  @@map("users")
+}
+
+enum Role {
+  ADMIN     // Full system access
+  HERBALIST // Practice management access  
+  CLIENT    // Client portal access
+  PUBLIC    // Public content only
+}
+
+model PracticeInfo {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  licenseNumber    String?
+  certifications   Json?    // Array of certification strings
+  businessName     String?
+  businessAddress  String?  @db.Text
+  website          String?
+  
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("practice_info")
+}
+
+// ===================================================================
+// HERB INVENTORY MANAGEMENT
+// ===================================================================
+
+model Herb {
+  id          String   @id @default(cuid())
+  name        String   // Common name
+  latinName   String?  // Scientific name
+  type        HerbType
+  description String?  @db.Text
+
+  // Inventory tracking
+  quantity     Decimal @default(0) @db.Decimal(10, 3)
+  unit         String  // grams, ounces, etc.
+  minimumStock Decimal? @db.Decimal(10, 3) // Reorder threshold
+  costPerUnit  Decimal? @db.Decimal(10, 2) // Cost tracking
+
+  // Sourcing information
+  supplier     String?
+  supplierInfo Json? // Contact details, certifications
+  batchNumber  String?
+  lotNumber    String?
+
+  // Quality and compliance
+  harvestDate     DateTime?
+  expirationDate  DateTime?
+  qualityGrade    String? // Organic, wildcrafted, etc.
+  certifications  Json? // FDA, USDA Organic, etc.
+
+  // Storage information
+  storageLocation   String?
+  storageConditions Json? // Temperature, humidity requirements
+
+  // Documentation
+  notes  String? @db.Text
+  images Json? // S3 URLs array
+
+  // Audit trail
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  preparations       Preparation[]
+  formulaIngredients FormulaIngredient[]
+  inventoryLogs      InventoryLog[]
+
+  @@map("herbs")
+}
+
+enum HerbType {
+  FRESH_HERB
+  DRIED_HERB
+  ROOT
+  BARK
+  FLOWER
+  SEED
+  FRUIT
+  RESIN
+  ESSENTIAL_OIL
+  POWDER
+  OTHER
+}
+
+model InventoryLog {
+  id       String @id @default(cuid())
+  herbId   String
+  action   String // ADD, REMOVE, ADJUST, EXPIRE
+  quantity Decimal @db.Decimal(10, 3)
+  reason   String?
+  
+  createdAt DateTime @default(now())
+  
+  herb Herb @relation(fields: [herbId], references: [id], onDelete: Cascade)
+
+  @@map("inventory_logs")
+}
+
+// ===================================================================
+// FORMULA MANAGEMENT
+// ===================================================================
+
+model Formula {
+  id           String  @id @default(cuid())
+  name         String
+  description  String? @db.Text
+  instructions String  @db.Text // Preparation instructions
+
+  // Formula metadata
+  category   String? // Digestive, respiratory, etc.
+  difficulty String? // Beginner, intermediate, advanced
+  prepTime   Int? // Minutes
+  yieldAmount Decimal? @db.Decimal(10, 3) // Expected yield
+  yieldUnit  String? // ml, grams, etc.
+
+  // Dosage and usage
+  dosage            String? @db.Text // "1 tsp 3x daily"
+  duration          String? // "2-4 weeks"
+  contraindications String? @db.Text
+  interactions      String? @db.Text // Drug interactions
+
+  // Business information
+  basePrice     Decimal? @db.Decimal(10, 2) // Per batch
+  laborCost     Decimal? @db.Decimal(10, 2)
+  markupPercent Decimal? @db.Decimal(5, 2)
+  finalPrice    Decimal? @db.Decimal(10, 2) // Calculated field
+
+  // Publishing and visibility
+  isPublic    Boolean   @default(false)
+  isDraft     Boolean   @default(true)
+  publishedAt DateTime?
+
+  // Version control
+  version  Int     @default(1)
+  parentId String? // For formula variations
+  parent   Formula? @relation("FormulaVersions", fields: [parentId], references: [id])
+  versions Formula[] @relation("FormulaVersions")
+
+  // Ownership and attribution
+  createdBy   String?
+  creator     User?   @relation(fields: [createdBy], references: [id])
+
+  // Audit trail
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  ingredients  FormulaIngredient[]
+  preparations Preparation[]
+  blogPosts    BlogPost[]
+  discussions  Discussion[]
+  versionHistory FormulaVersion[]
+  tags         FormulaTag[]
+  shares       FormulaShare[]
+  comments     FormulaComment[]
+  collaborators FormulaCollaborator[]
+  reviews      FormulaReview[]
+
+  @@map("formulas")
+}
+
+model FormulaIngredient {
+  id       String @id @default(cuid())
+  formulaId String
+  herbId   String
+
+  // Ingredient specifications
+  quantity        Decimal @db.Decimal(10, 3)
+  unit            String
+  ratio           String? // "1:5", "20%", etc.
+  processingNotes String? // "finely ground", "fresh only"
+
+  // Calculation fields
+  costPerUnit Decimal? @db.Decimal(10, 2)
+  totalCost   Decimal? @db.Decimal(10, 2)
+
+  // Relationships
+  formula Formula @relation(fields: [formulaId], references: [id], onDelete: Cascade)
+  herb    Herb    @relation(fields: [herbId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([formulaId, herbId])
+  @@map("formula_ingredients")
+}
+
+model Preparation {
+  id        String @id @default(cuid())
+  formulaId String?
+  herbId    String?
+  
+  name         String
+  method       String @db.Text // Decoction, tincture, etc.
+  instructions String @db.Text
+  yieldAmount  Decimal? @db.Decimal(10, 3)
+  yieldUnit    String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  formula Formula? @relation(fields: [formulaId], references: [id])
+  herb    Herb?    @relation(fields: [herbId], references: [id])
+
+  @@map("preparations")
+}
+
+model FormulaVersion {
+  id        String @id @default(cuid())
+  formulaId String
+  version   Int
+  
+  // Change tracking
+  changeType   String   // "CREATED", "UPDATED", "INGREDIENT_ADDED", "INGREDIENT_REMOVED", "INGREDIENT_MODIFIED"
+  changeTitle  String   // Brief description of changes
+  changeNotes  String?  @db.Text // Detailed notes about the changes
+  changes      Json?    // Structured change data
+  
+  // Snapshot of formula data at this version
+  formulaSnapshot Json   // Complete formula state at this version
+  
+  // User who made the change
+  createdBy String
+  creator   User   @relation(fields: [createdBy], references: [id])
+  
+  // Audit trail
+  createdAt DateTime @default(now())
+  
+  // Relationships
+  formula Formula @relation(fields: [formulaId], references: [id], onDelete: Cascade)
+  
+  @@unique([formulaId, version])
+  @@map("formula_versions")
+}
+
+model FormulaTag {
+  id        String @id @default(cuid())
+  formulaId String
+  tag       String
+
+  // Metadata
+  createdAt DateTime @default(now())
+  createdBy String?
+  creator   User?    @relation(fields: [createdBy], references: [id])
+
+  // Relationships
+  formula Formula @relation(fields: [formulaId], references: [id], onDelete: Cascade)
+
+  @@unique([formulaId, tag])
+  @@index([tag])
+  @@map("formula_tags")
+}
+
+model FormulaShare {
+  id        String @id @default(cuid())
+  formulaId String
+  sharedBy  String
+  sharedWith String?
+  
+  // Sharing configuration
+  shareType     String // "user", "public", "practice", "link"
+  permissions   Json   // { canView: boolean, canEdit: boolean, canComment: boolean }
+  accessLevel   String // "read", "comment", "edit", "admin"
+  
+  // Link sharing
+  shareToken    String? @unique
+  expiresAt     DateTime?
+  requiresAuth  Boolean @default(true)
+  
+  // Metadata
+  shareNotes    String? @db.Text
+  isActive      Boolean @default(true)
+  
+  // Audit trail
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relationships
+  formula    Formula @relation(fields: [formulaId], references: [id], onDelete: Cascade)
+  sharedByUser User   @relation("SharedFormulas", fields: [sharedBy], references: [id])
+  sharedWithUser User? @relation("ReceivedFormulas", fields: [sharedWith], references: [id])
+  
+  @@index([formulaId])
+  @@index([sharedBy])
+  @@index([sharedWith])
+  @@index([shareToken])
+  @@map("formula_shares")
+}
+
+model FormulaComment {
+  id        String @id @default(cuid())
+  formulaId String
+  userId    String
+  parentId  String? // For threaded comments
+  
+  // Comment content
+  content   String  @db.Text
+  type      String  @default("comment") // "comment", "suggestion", "question", "review"
+  
+  // Moderation
+  isEdited     Boolean   @default(false)
+  isModerated  Boolean   @default(false)
+  moderatedBy  String?
+  moderatedAt  DateTime?
+  
+  // Metadata
+  isPrivate    Boolean @default(false) // Private notes visible only to formula owner
+  isResolved   Boolean @default(false) // For suggestions/questions
+  resolvedBy   String?
+  resolvedAt   DateTime?
+  
+  // Audit trail
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relationships
+  formula     Formula        @relation(fields: [formulaId], references: [id], onDelete: Cascade)
+  user        User           @relation(fields: [userId], references: [id])
+  parent      FormulaComment? @relation("CommentReplies", fields: [parentId], references: [id])
+  replies     FormulaComment[] @relation("CommentReplies")
+  moderator   User?          @relation("ModeratedComments", fields: [moderatedBy], references: [id])
+  resolver    User?          @relation("ResolvedComments", fields: [resolvedBy], references: [id])
+  
+  @@index([formulaId])
+  @@index([userId])
+  @@index([parentId])
+  @@map("formula_comments")
+}
+
+model FormulaCollaborator {
+  id        String @id @default(cuid())
+  formulaId String
+  userId    String
+  invitedBy String
+  
+  // Collaboration settings
+  role          String  // "viewer", "commenter", "editor", "co-owner"
+  permissions   Json    // Detailed permissions object
+  isAccepted    Boolean @default(false)
+  isActive      Boolean @default(true)
+  
+  // Invitation
+  inviteToken   String? @unique
+  inviteEmail   String?
+  inviteMessage String? @db.Text
+  invitedAt     DateTime @default(now())
+  acceptedAt    DateTime?
+  
+  // Audit trail
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relationships
+  formula   Formula @relation(fields: [formulaId], references: [id], onDelete: Cascade)
+  user      User    @relation("FormulaCollaborations", fields: [userId], references: [id])
+  inviter   User    @relation("FormulaInvitations", fields: [invitedBy], references: [id])
+  
+  @@unique([formulaId, userId])
+  @@index([formulaId])
+  @@index([userId])
+  @@index([inviteToken])
+  @@map("formula_collaborators")
+}
+
+model FormulaReview {
+  id        String @id @default(cuid())
+  formulaId String
+  reviewerId String
+  
+  // Review content
+  rating      Int?     // 1-5 stars
+  title       String?
+  content     String   @db.Text
+  reviewType  String   @default("general") // "general", "safety", "efficacy", "peer"
+  
+  // Review metadata
+  isPublic     Boolean @default(true)
+  isVerified   Boolean @default(false) // Verified by practice or expert
+  verifiedBy   String?
+  verifiedAt   DateTime?
+  
+  // Professional context
+  practiceYears    Int?
+  specializations  Json? // Array of specialization areas
+  practiceType     String? // "clinical", "research", "teaching"
+  
+  // Helpful votes
+  helpfulVotes     Int @default(0)
+  unhelpfulVotes   Int @default(0)
+  
+  // Audit trail
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relationships
+  formula   Formula @relation(fields: [formulaId], references: [id], onDelete: Cascade)
+  reviewer  User    @relation("FormulaReviews", fields: [reviewerId], references: [id])
+  verifier  User?   @relation("VerifiedReviews", fields: [verifiedBy], references: [id])
+  
+  @@unique([formulaId, reviewerId]) // One review per user per formula
+  @@index([formulaId])
+  @@index([reviewerId])
+  @@map("formula_reviews")
+}
+
+// ===================================================================
+// CLIENT PROFILES & HEALTH DATA
+// ===================================================================
+
+model ClientProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+
+  // Personal information (some encrypted)
+  dateOfBirth     DateTime?
+  gender          String?
+  emergencyContact Json? // Encrypted emergency contact info
+
+  // Health information (HIPAA protected - encrypted)
+  allergies   Json? // Encrypted string array
+  medications Json? // Current medications (encrypted)
+  conditions  Json? // Health conditions (encrypted)
+  healthGoals String? @db.Text // Encrypted
+
+  // Consultation history
+  firstVisit  DateTime?
+  lastVisit   DateTime?
+  totalVisits Int @default(0)
+
+  // Preferences
+  communicationPrefs Json? // Email, SMS preferences
+  treatmentPrefs     Json? // Preferred treatment approaches
+
+  // Consent and legal
+  hipaaConsent   Boolean   @default(false)
+  consentDate    DateTime?
+  consentVersion String?
+
+  // Audit trail
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  consultationNotes ConsultationNote[]
+  treatmentPlans    TreatmentPlan[]
+
+  @@map("client_profiles")
+}
+
+model ConsultationNote {
+  id              String @id @default(cuid())
+  clientProfileId String
+  appointmentId   String?
+
+  // Consultation details (encrypted)
+  chiefComplaint  String @db.Text // Encrypted
+  assessment      String @db.Text // Encrypted
+  recommendations String @db.Text // Encrypted
+  followUp        String? @db.Text // Encrypted
+
+  // Session information
+  sessionDate DateTime
+  duration    Int? // Minutes
+  sessionType String? // In-person, virtual, phone
+
+  // Practitioner notes
+  privateNotes String? @db.Text // Encrypted, herbalist only
+
+  // Audit trail
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  clientProfile ClientProfile @relation(fields: [clientProfileId], references: [id], onDelete: Cascade)
+  appointment   Appointment?  @relation(fields: [appointmentId], references: [id])
+
+  @@map("consultation_notes")
+}
+
+model TreatmentPlan {
+  id              String @id @default(cuid())
+  clientProfileId String
+  
+  name        String
+  description String @db.Text
+  startDate   DateTime
+  endDate     DateTime?
+  isActive    Boolean @default(true)
+  
+  goals       Json? // Treatment goals
+  protocols   Json? // Treatment protocols
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  clientProfile ClientProfile @relation(fields: [clientProfileId], references: [id], onDelete: Cascade)
+
+  @@map("treatment_plans")
+}
+
+// ===================================================================
+// APPOINTMENT MANAGEMENT
+// ===================================================================
+
+model Appointment {
+  id          String @id @default(cuid())
+  clientId    String
+  herbalistId String
+
+  // Appointment details
+  startTime   DateTime
+  endTime     DateTime
+  duration    Int      // Duration in minutes
+  timeZone    String   @default("UTC")
+  title       String
+  description String?  @db.Text
+
+  // Appointment type and logistics
+  type        AppointmentType
+  location    Json?    // Location object with type, address, etc.
+  
+  // Status management
+  status         AppointmentStatus @default(SCHEDULED)
+  cancelReason   String?
+  noShowReason   String?
+  
+  // Payment details
+  fee            Decimal? @db.Decimal(10, 2)
+  currency       String   @default("USD")
+  paymentStatus  String   @default("PENDING") // PENDING, PAID, PARTIAL, REFUNDED, WAIVED
+
+  // Integration data
+  googleCalendarEventId String?  // Google Calendar integration
+  syncWithGoogleCalendar Boolean @default(true)
+  lastGoogleSync        DateTime?
+  
+  // Reminder and notification settings
+  reminderSettings Json?     // Reminder configuration
+  remindersSent    Json?     // Track sent reminders
+  lastReminderAt   DateTime?
+
+  // Additional features
+  isRecurring      Boolean @default(false)
+  recurringPattern Json?   // Recurring pattern data
+  notes            String? @db.Text
+  internalNotes    String? @db.Text
+  isPrivate        Boolean @default(false)
+
+  // Audit trail
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  client            User               @relation("ClientAppointments", fields: [clientId], references: [id])
+  herbalist         User               @relation("HerbalistAppointments", fields: [herbalistId], references: [id])
+  consultationNotes ConsultationNote[]
+  intakeSubmissions IntakeSubmission[]
+
+  @@map("appointments")
+}
+
+enum AppointmentType {
+  INITIAL_CONSULTATION
+  FOLLOW_UP
+  PHONE_CONSULT
+  VIDEO_CONSULT
+  GROUP_SESSION
+  WORKSHOP
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  RESCHEDULED
+}
+
+// ===================================================================
+// INTAKE FORMS & DATA COLLECTION
+// ===================================================================
+
+model IntakeForm {
+  id          String @id @default(cuid())
+  name        String
+  description String? @db.Text
+
+  // Form structure (JSON schema)
+  fields          Json // Dynamic form field definitions
+  validationRules Json? // Custom validation rules
+
+  // Form metadata
+  category      String? // "Initial", "Follow-up", "Specialized"
+  estimatedTime Int? // Minutes to complete
+
+  // Form status
+  isActive   Boolean @default(true)
+  isRequired Boolean @default(false)
+
+  // Versioning
+  version         Int     @default(1)
+  previousVersion String? // Reference to previous version
+
+  // Audit trail
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  submissions IntakeSubmission[]
+
+  @@map("intake_forms")
+}
+
+model IntakeSubmission {
+  id            String @id @default(cuid())
+  formId        String
+  clientId      String
+  appointmentId String?
+
+  // Form responses (encrypted)
+  responses   Json     @db.Json // Encrypted form responses
+  completedAt DateTime
+
+  // Submission metadata
+  ipAddress String? // For audit purposes
+  userAgent String? @db.Text // Browser information
+
+  // Processing status
+  isReviewed  Boolean   @default(false)
+  reviewedAt  DateTime?
+  reviewNotes String?   @db.Text
+
+  // Audit trail
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  form        IntakeForm   @relation(fields: [formId], references: [id])
+  client      User         @relation(fields: [clientId], references: [id])
+  appointment Appointment? @relation(fields: [appointmentId], references: [id])
+
+  @@map("intake_submissions")
+}
+
+// ===================================================================
+// CONTENT MANAGEMENT
+// ===================================================================
+
+model BlogPost {
+  id      String @id @default(cuid())
+  title   String
+  slug    String @unique
+  excerpt String? @db.Text
+  content String @db.LongText // Rich text content
+
+  // SEO and metadata
+  metaTitle       String?
+  metaDescription String? @db.Text
+  keywords        Json? // String array
+
+  // Media
+  featuredImage String? // S3 URL
+  images        Json? // Additional images array
+
+  // Publishing
+  published   Boolean   @default(false)
+  publishedAt DateTime?
+  scheduledAt DateTime?
+
+  // Engagement
+  viewCount  Int @default(0)
+  likeCount  Int @default(0)
+  shareCount Int @default(0)
+
+  // Content relationships
+  formulaId String? // Associated formula
+
+  // Audit trail
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  formula     Formula?       @relation(fields: [formulaId], references: [id])
+  categories  BlogCategory[]
+  tags        BlogTag[]
+  discussions Discussion[]
+
+  @@map("blog_posts")
+}
+
+model BlogCategory {
+  id          String @id @default(cuid())
+  name        String @unique
+  slug        String @unique
+  description String? @db.Text
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  posts BlogPost[]
+
+  @@map("blog_categories")
+}
+
+model BlogTag {
+  id   String @id @default(cuid())
+  name String @unique
+  slug String @unique
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  posts BlogPost[]
+
+  @@map("blog_tags")
+}
+
+model Event {
+  id          String @id @default(cuid())
+  title       String
+  description String @db.Text
+
+  // Event timing
+  startDateTime DateTime
+  endDateTime   DateTime
+  timeZone      String
+
+  // Event details
+  eventType    EventType
+  location     String?
+  virtualLink  String?
+  maxAttendees Int?
+
+  // Pricing
+  price    Decimal? @db.Decimal(10, 2)
+  currency String   @default("USD")
+
+  // Media and marketing
+  image String?
+  tags  Json? // String array
+
+  // Registration management
+  requiresApproval Boolean @default(false)
+  isPublic         Boolean @default(true)
+
+  // Audit trail
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  registrations EventRegistration[]
+
+  @@map("events")
+}
+
+enum EventType {
+  WORKSHOP
+  WEBINAR
+  PLANT_WALK
+  CONSULTATION_GROUP
+  CONFERENCE
+  OTHER
+}
+
+model EventRegistration {
+  id      String @id @default(cuid())
+  eventId String
+  userId  String
+  
+  status    RegistrationStatus @default(PENDING)
+  notes     String? @db.Text
+  isPaid    Boolean @default(false)
+  paymentDate DateTime?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([eventId, userId])
+  @@map("event_registrations")
+}
+
+enum RegistrationStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  WAITLISTED
+}
+
+// ===================================================================
+// COMMUNICATION & MESSAGING
+// ===================================================================
+
+model Message {
+  id          String @id @default(cuid())
+  senderId    String
+  recipientId String
+
+  // Message content (encrypted)
+  subject String
+  content String @db.Text // Encrypted
+
+  // Message metadata
+  messageType MessageType @default(GENERAL)
+  priority    Priority    @default(NORMAL)
+
+  // Thread management
+  threadId  String?
+  replyToId String?
+
+  // Status tracking
+  isRead     Boolean   @default(false)
+  readAt     DateTime?
+  isArchived Boolean   @default(false)
+
+  // Attachments
+  attachments Json? // S3 URLs and metadata
+
+  // Audit trail
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  sender    User          @relation("SentMessages", fields: [senderId], references: [id])
+  recipient User          @relation("ReceivedMessages", fields: [recipientId], references: [id])
+  thread    MessageThread? @relation(fields: [threadId], references: [id])
+
+  @@map("messages")
+}
+
+enum MessageType {
+  GENERAL
+  APPOINTMENT_RELATED
+  HEALTH_CONCERN
+  FORMULA_QUESTION
+  ADMINISTRATIVE
+}
+
+enum Priority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model MessageThread {
+  id      String @id @default(cuid())
+  subject String
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  messages Message[]
+
+  @@map("message_threads")
+}
+
+model Discussion {
+  id       String @id @default(cuid())
+  title    String
+  content  String @db.Text
+  
+  // Context
+  blogPostId String?
+  formulaId  String?
+  
+  // Status
+  isApproved Boolean @default(false)
+  isLocked   Boolean @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  blogPost BlogPost? @relation(fields: [blogPostId], references: [id])
+  formula  Formula?  @relation(fields: [formulaId], references: [id])
+
+  @@map("discussions")
+}
+
+// ===================================================================
+// AUDIT & COMPLIANCE
+// ===================================================================
+
+model AuditLog {
+  id String @id @default(cuid())
+
+  // HIPAA audit event classification
+  eventType         String // LOGIN, PHI_READ, PHI_CREATE, etc.
+  outcome           String // SUCCESS, FAILURE, WARNING
+  timestamp         DateTime @default(now())
+
+  // User identification
+  userId            String?
+  userRole          String? // Role enum as string
+  userEmail         String?
+  sessionId         String?
+
+  // Network information
+  ipAddress         String?
+  userAgent         String? @db.Text
+
+  // Resource information
+  resourceType      String? // ClientProfile, ConsultationNote, etc.
+  resourceId        String?
+  resourceDescription String? @db.Text
+
+  // HIPAA compliance
+  dataSensitivity   String // PUBLIC, INTERNAL, CONFIDENTIAL, PHI
+  affectedUserId    String? // For admin actions affecting other users
+  reasonCode        String? // Business justification code
+  message           String? @db.Text
+
+  // Event details (JSON for flexibility)
+  details           String? @db.Text // JSON string of additional data
+
+  // Relationships
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([eventType])
+  @@index([timestamp])
+  @@index([userId])
+  @@index([dataSensitivity])
+  @@index([resourceType])
+  @@map("audit_logs")
+}
+
+// ===================================================================
+// ENCRYPTION METADATA
+// ===================================================================
+
+model EncryptionMetadata {
+  id            String @id @default(cuid())
+  tableName     String
+  fieldName     String
+  encryptionKey String // Reference to KMS key
+  algorithm     String // AES-256-GCM
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tableName, fieldName])
+  @@map("encryption_metadata")
+}
